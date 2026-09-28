@@ -174,14 +174,8 @@ class EhParser:
     def parse_gallery_list(html: str) -> Dict:
         soup = BeautifulSoup(html, 'html.parser')
         galleries = []
-        main_table = soup.find('table', class_='itg gltc')
-        # 如果找不到主表格，记录日志并返回空结果
-        if not main_table:
-            logging.warning("未能解析到画廊列表 (找不到 'itg gltc' 表格)。页面原始内容如下：")
-            logging.debug(html)
-            return {'galleries': [], 'pagination': {}}
-        
-        rows = main_table.find_all('tr')
+        main_table = soup.find('table', class_=lambda c: c and 'itg' in c) or soup.find('table', class_='itg')
+        rows = main_table.find_all('tr') if main_table else []
         for row in rows:
             try:
                 name_cell = row.find('td', class_='glname')
@@ -218,10 +212,29 @@ class EhParser:
                 galleries.append(gallery)
             except Exception as e: logging.error(f"解析画廊项时发生错误: {e}"); continue
         
-        # 如果循环后列表仍为空，可能页面有内容但所有行都解析失败
-        if not galleries and len(rows) > 1: # len(rows) > 1 是为了排除只有表头的情况
-            logging.warning("画廊列表解析结果为空，可能所有行都解析失败。页面原始内容如下：")
-            logging.debug(html)
+        # 如果表格模式未匹配到任何结果，尝试解析缩略图网格视图 (div.gl1t)
+        if not galleries:
+            grid_items = soup.select('div.itg div.gl1t, div.gl1t')
+            for item in grid_items:
+                try:
+                    link_tag = item.select_one('div.gl3t a, a')
+                    if not link_tag or not link_tag.has_attr('href'): continue
+                    url = link_tag['href']
+                    match = EhParser.PATTERN_GALLERY_URL.search(url)
+                    if not match: continue
+                    gallery = {'gid': int(match.group(1)), 'token': match.group(2), 'url': url}
+                    title_elem = item.select_one('div.gl4t div.glink, div.glink')
+                    gallery['title'] = title_elem.get_text(strip=True) if title_elem else 'N/A'
+                    img_elem = item.select_one('div.gl3t img, img')
+                    if img_elem:
+                        gallery['thumbnail'] = img_elem.get('data-src') or img_elem.get('src')
+                    pages_text_node = item.find(string=re.compile(r'\d+\s+pages?'))
+                    if pages_text_node:
+                        pages_match = EhParser.PATTERN_PAGES.search(pages_text_node)
+                        if pages_match: gallery['pages'] = int(pages_match.group(1))
+                    galleries.append(gallery)
+                except Exception as e:
+                    logging.error(f"解析网格项出错: {e}")
 
         pagination = {'has_next': False, 'next_id': None}
         try:
@@ -841,12 +854,11 @@ def search():
         search_keyword = request.args.get('q', '')
         page = int(request.args.get('page', 1) or 1)
 
-        keyword = decode_search_value(search_keyword)
-        print(f"原始值: {search_keyword}, 解码后: {keyword}")
+        keyword = decode_search_value(search_keyword) if search_keyword else None
+        clean_keyword = keyword.strip() if keyword and keyword.strip() else None
+        print(f"原始值: {search_keyword}, 解码后: {clean_keyword}")
         
-        if not keyword: return jsonify({'error': '缺少搜索关键词参数 q'}), 400
-        
-        cache_key = f"search_{keyword}"
+        cache_key = f"search_{clean_keyword or 'all'}"
         next_id = None
         
         if page > 1:
@@ -854,7 +866,7 @@ def search():
             if not next_id:
                 for p in range(1, page):
                     prev_next_id = pagination_cache.get(f"{cache_key}_{p - 1}") if p > 1 else None
-                    temp_url = url_builder.build_search_url(keyword=keyword, next_id=prev_next_id)
+                    temp_url = url_builder.build_search_url(keyword=clean_keyword, next_id=prev_next_id)
                     temp_result = get_gallery_list_data(temp_url, tuple(headers.items()))
                     if not temp_result:
                         return jsonify({'error': f'无法获取第 {p} 页数据'}), 500
@@ -867,7 +879,7 @@ def search():
                 
                 next_id = pagination_cache.get(f"{cache_key}_{page - 1}")
         
-        url = url_builder.build_search_url(keyword=keyword, next_id=next_id)
+        url = url_builder.build_search_url(keyword=clean_keyword, next_id=next_id)
         result = get_gallery_list_data(url, tuple(headers.items()))
         if not result: return jsonify({'error': '无法获取搜索结果'}), 500
         

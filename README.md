@@ -1,330 +1,469 @@
-# Public E-Hentai API Service
+# ehapi (Ehentai-api-Java)
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+独立的 **Kotlin / JVM API 客户端库**，专为 E-Hentai 与自定义漫画源服务打造，不含任何 Android 依赖。
+**全面深度对齐 [PicACG-Api-Java](file:///F:/projects/Java/PicACG-Api-Java) 架构设计与调用规范**，提供开箱即用、极致便利的 Java 与 Kotlin 双端调用体验。
 
-一个高性能、带缓存、专为低功耗设备（如 RTOS 快应用）优化的 E-Hentai 公共 API 服务。符合自定义漫画源规范，可直接用于漫画阅读应用。
-
-## ✨ 功能特性
-
-- **高性能**: 使用 `Gunicorn` 作为 WSGI 服务器和 `PM2` 多进程管理，充分利用多核 CPU 性能。
-- **全方位缓存**: 
-  - API 响应缓存 (5分钟)
-  - 画廊详情缓存 (1小时)
-  - 图片代理缓存 (24小时)
-  - 分页游标缓存 (10分钟)
-- **专为嵌入式优化**:
-    - 一次性返回当前虚拟章节的图片链接，避免手表端二次解析页面。
-    - E-Hentai 单篇画廊会按每 20 张图片拆分为虚拟章节，降低大画廊首屏等待和服务端压力。
-    - 图片在服务器端统一代理、缩放、压缩和转码，适配低功耗设备。
-    - 服务器端实现雪碧图（Sprite Sheet）的精确切割。
-- **强大的图片处理**:
-    - 支持动态调整图片宽度和压缩质量。
-    - 支持 JPEG、PNG 和 LVGL 预解码二进制输出。
-    - 支持 `ifLVGL=1`、`ifPNG=1` 参数，优先级为 `ifLVGL > ifPNG > JPEG`。
-    - 强制将 WebP 等格式转换为快应用更易处理的格式。
-    - 根据设备 User-Agent 自动调整图片参数。
-- **智能分页**: 服务器端缓存游标，客户端只需传递页数即可翻页。
-- **标签汉化**: 根据腕上漫画 User-Agent 中的 `language/region` 判断中文环境，并通过 EhTagTranslation 数据库汉化分类和标签。
-- **符合漫画源规范**: 完全符合自定义漫画源标准，可直接集成到漫画阅读应用。
-- **易于部署**: 提供详细的手动部署指南和一键安装脚本。
+- **Gradle** 构建，纯 JVM（Java 17+）
+- **OkHttp 5.x** 直连 REST，无 Retrofit
+- **双端对齐架构**：与 `PicACG-Api-Java` 拥有完全一致的 API 设计语言（`Eh` 全局单例、`EhResult` 统一结果模型、`EhClient` 同步阻塞接口、`EhAsyncClient` 异步 CompletableFuture、`EhQuery` 流式查询构建器、`EhDownloader` 章节并发下载器）
+- **全生态兼容**：既支持对接本项目内置/自建的 E-Hentai 高性能代理服务（`/config`、`/search`、`/comic`、`/photo`、`/image/proxy`），又内置 E-Hentai 官方 JSON RPC 接口直连（`gdata` 元数据获取）
+- **Java 友好**：全接口具备 `@JvmOverloads`、Fluent Builder、Java 8 `Optional`、`Consumer`/`Function` 函数式链式回调
+- **原子下载与低功耗支持**：Windows 非法文件名净化、`.tmp` 原子重命名防破损、LVGL / PNG / JPEG 预解码格式支持
 
 ---
 
-## 🚀 部署指南
+## 目录
 
-我们提供两种部署方式：**一键安装脚本 (推荐)** 和 **手动部署**。
+- [功能特性](#功能特性)
+- [环境与构建](#环境与构建)
+- [引入项目](#引入项目)
+- [快速开始](#快速开始)
+  - [Kotlin](#kotlin)
+  - [Java](#java)
+- [全局单例 `Eh`](#全局单例-eh)
+- [结果处理 `EhResult`](#结果处理-ehresult)
+- [配置 `EhConfig`](#配置-ehconfig)
+- [查询构建 `EhQuery`](#查询构建-ehquery)
+- [REST 与官方接口索引](#rest-与官方接口索引)
+- [图片代理与下载器](#图片代理与下载器)
+- [线程安全](#线程安全)
+- [错误处理](#错误处理)
+- [目录结构](#目录结构)
+- [后端代理服务参考](#后端代理服务参考)
+- [FAQ](#faq)
 
-### 方式一：一键安装脚本 (推荐)
+更多细节见：
+- [docs/API.md](docs/API.md) —— 全部 REST 与官方接口签名及用法
+- [docs/CONFIG.md](docs/CONFIG.md) —— 配置项完整说明与网络参数
 
-此脚本适用于一个全新的、基于 Debian 的系统 (如 Ubuntu)。它将自动完成所有环境配置和部署。
+---
 
-**1. 下载脚本**:
+## 功能特性
+
+| 模块 | 说明 | 对齐 PicACG 设计 |
+| --- | --- | --- |
+| **全局单例** | `Eh.init()`、`Eh.client`、`Eh.async`、`Eh.cookie()`、持久化恢复 | 对齐 `Pica` |
+| **统一结果包装** | `EhResult<T>`（`Success` / `Failure`，支持 `getOrThrow`、`toOptional`、链式回调） | 对齐 `PicaResult` |
+| **同步/异步客户端** | 同步阻塞接口 `EhClient`，基于 `CompletableFuture` 的非阻塞接口 `EhAsyncClient` | 对齐 `PicaClient` / `PicaAsyncClient` |
+| **漫画检索** | 关键字、语言、多命名空间标签、分类、页码筛选与表达式智能生成 | 对齐 `ComicQuery` |
+| **漫画详情** | 获取画廊标题、评分、总虚拟章节数、封面图、汉化标签列表 | 对齐 `ComicDetail` |
+| **章节与图片** | 获取虚拟章节（每章 20 页）图片列表，支持全本图片聚合拉取 | 对齐 `ComicEpisodes` / `ComicPages` |
+| **图片代理** | 服务端动态缩放、裁剪雪碧图、压缩质量、JPEG / PNG / LVGL 格式输出 | 对齐 `PicaImages` |
+| **多线程下载器** | 非法字符过滤、安全原子落盘、并发流水线下载、实时进度通知回调 | 对齐 `PicaDownloader` |
+| **官方 JSON 直连** | 官方 `api.php` 的 `gdata` 元数据单本与批量查询 | 官方 JSON RPC 原生直连 |
+| **源规范对齐** | 获取 `/config` 漫画源标准配置，支持一键载入漫画阅读器 | 自定义漫画源规范 |
+
+---
+
+## 环境与构建
+
+要求：
+- JDK 17+（`JAVA_HOME` 指向 JDK 17）
+- 无需 Android SDK，纯 JVM 库
+
 ```bash
-wget https://raw.githubusercontent.com/OrPudding/vela-py-eh-api-server/main/install.sh
+./gradlew build            # 编译 + 运行测试 + 打包
+./gradlew test             # 单独执行单元测试
+./gradlew jar              # 打包 jar
 ```
 
-**2. 运行脚本**:
+产物位于：
+```
+build/libs/ehapi-1.0.0.jar
+build/libs/ehapi-1.0.0-sources.jar
+```
+
+---
+
+## 引入项目
+
+### 方式一：复合构建（推荐，直接用源码）
+
+```groovy
+// settings.gradle
+includeBuild('../Ehentai-api-Java')
+
+// build.gradle
+dependencies {
+    implementation 'com.ehapi:ehapi:1.0.0'
+}
+```
+
+### 方式二：本地 jar
+
+```groovy
+dependencies {
+    implementation files('libs/ehapi-1.0.0.jar')
+    // 传递依赖需自行声明
+    implementation 'com.squareup.okhttp3:okhttp:5.3.2'
+    implementation 'com.squareup.okhttp3:logging-interceptor:5.3.2'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.2.21'
+}
+```
+
+---
+
+## 快速开始
+
+### Kotlin
+
+```kotlin
+import com.ehapi.EhClient
+import com.ehapi.EhQuery
+import com.ehapi.objects.EhImageFormat
+import java.io.File
+
+// 1. 初始化客户端
+val eh = EhClient {
+    baseUrl = "https://your-api-domain.com/"
+    cookie = "igneous=xxx; ipb_member_id=12345;"
+    defaultImageQuality = 60
+}
+
+// 2. 搜索漫画：直接 getOrThrow() 或函数式处理
+val search = eh.searchComics(
+    EhQuery.builder()
+        .keyword("genshin")
+        .language("chinese")
+        .addTag("female", "maid")
+        .build()
+).getOrThrow()
+
+search.results.forEach { item ->
+    println("${item.title} -> ${item.comicId} (Gid: ${item.gid}, Token: ${item.token})")
+}
+
+// 3. 读取漫画详情与虚拟章节
+val detail = eh.getComicDetail(search.results[0].comicId).getOrThrow()
+println("画廊名称: ${detail.name}, 评分: ${detail.rate}, 虚拟章节数: ${detail.totalChapters}")
+
+val chapter = eh.getComicImages(detail.itemId, 1).getOrThrow()
+println("第 1 章图片数: ${chapter.imageCount}")
+
+// 4. 并发下载章节图片（带进度通知）
+eh.downloader.downloadChapter(
+    images = chapter.images,
+    destinationDir = File("./downloads/${detail.gid}"),
+    listener = { p -> println("已下载: ${p.current}/${p.total} (${p.percentage}%)") }
+)
+
+// 5. 异步调用 (返回 CompletableFuture)
+eh.async.getComicDetail("3645215_4db836130d").thenAccept { res ->
+    res.onSuccess { println("异步获取成功: ${it.name}") }
+}
+```
+
+### Java
+
+```java
+import com.ehapi.*;
+import com.ehapi.objects.*;
+import java.io.File;
+
+// 1. 支持 fluent Builder 构造配置
+EhClient client = EhClient.create(EhConfig.builder()
+    .baseUrl("https://your-api-domain.com/")
+    .cookie("igneous=xxx; ipb_member_id=12345;")
+    .defaultImageQuality(50)
+    .enableLogging(true)
+    .build());
+
+// 2. 构造查询参数进行检索
+EhResult<EhSearchResponse> searchResult = client.searchComics(
+    EhQuery.builder()
+        .keyword("naruto")
+        .language("chinese")
+        .page(1)
+        .build()
+);
+
+// 3. 函数式链式回调，无需繁杂类型强转
+searchResult
+    .onSuccess(data -> {
+        System.out.println("共找到: " + data.getCount() + " 本画廊");
+        for (EhComicItem item : data.getResults()) {
+            System.out.println(item.getTitle() + " -> " + item.getComicId());
+        }
+    })
+    .onFailure(failure -> System.out.println("查询失败: " + failure.getMessage()));
+
+// 4. 直接抛出异常风格调用
+EhComicDetail detail = client.getComicDetail("3645215_4db836130d").getOrThrow();
+System.out.println("详情: " + detail.getName() + ", 评分: " + detail.getRate());
+
+// 5. 原生 CompletableFuture 异步支持，避免主线程网络阻塞
+client.async().getComicImages(detail.getItemId(), 1).thenAccept(res -> {
+    res.onSuccess(chapter -> {
+        System.out.println("章节图片总数: " + chapter.getImageCount());
+    });
+});
+
+// 6. 批量下载
+client.getDownloader().downloadChapter(
+    client.getComicImages(detail.getItemId(), 1).getOrThrow().getImages(),
+    new File("./downloads/chapter1"),
+    "page_",
+    progress -> System.out.println("下载进度: " + progress.getCurrent() + "/" + progress.getTotal()),
+    4,
+    client.getRawHttpClient()
+);
+```
+
+---
+
+## 全局单例 `Eh`
+
+`Eh` 提供跨页面共享的 `EhClient` 与 Cookie 持久化恢复，对齐 `PicACG-Api-Java` 中的 `Pica`：
+
+```kotlin
+import com.ehapi.Eh
+import com.ehapi.FileEhCookieStore
+import java.io.File
+
+// Kotlin DSL 快速初始化单例
+Eh.init(
+    cookieStore = FileEhCookieStore(File("cookie.txt"))
+) {
+    baseUrl = "https://your-api-domain.com/"
+}
+
+// 任何页面直接使用单例
+val result = Eh.searchComics("language:chinese")
+
+// 保存与读取 Cookie
+Eh.saveCookie("igneous=...;")
+println(Eh.cookie())
+
+// 清除 Cookie
+Eh.clearCookie()
+```
+
+| 成员 | 说明 |
+| --- | --- |
+| `Eh.init(config?, cookieStore?)` | 初始化单例，并自动恢复 `cookieStore` 中保存的 Cookie |
+| `Eh.client` | 全局 `EhClient`（未初始化时抛 `IllegalStateException`） |
+| `Eh.async` / `Eh.getAsync()` | 全局异步客户端 `EhAsyncClient` |
+| `Eh.downloader` | 全局下载器实例 `EhDownloader` |
+| `Eh.isInitialized` | 是否已初始化 |
+| `Eh.hasCookie` / `Eh.isLoggedIn` | 是否已持有有效 Cookie 凭据 |
+| `Eh.saveCookie(cookie)` / `Eh.cookie()` | 保存 / 读取当前 Cookie |
+| `Eh.clearCookie()` | 清除 Cookie |
+
+---
+
+## 结果处理 `EhResult`
+
+所有接口统一返回 `EhResult<T>`，在 Java 与 Kotlin 下均具备一流的使用体验：
+
+```kotlin
+sealed class EhResult<out T> {
+    data class Success<out T>(val data: T, val httpCode: Int = 200) : EhResult<T>()
+    data class Failure(
+        val httpCode: Int?,      // 请求未到达服务器（网络错误）时为 null
+        val errorCode: String?,  // 业务错误码
+        val message: String?,
+        val rawBody: String?,
+        val cause: Throwable?,
+    ) : EhResult<Nothing>()
+}
+```
+
+通用方法（Java / Kotlin 均可直接调用）：
+
+| 方法 / 属性 | 说明 |
+| --- | --- |
+| `isSuccess` / `isSuccess()` | 是否成功 |
+| `isFailure` / `isFailure()` | 是否失败 |
+| `getOrNull()` | 成功返回数据，失败返回 `null` |
+| `getFailureOrNull()` | 失败返回 `Failure` 结构，成功返回 `null`（Java 免强转） |
+| `getOrDefault(default)` | 成功返回数据，失败返回默认值 |
+| `getOrElse(fallback)` | 成功返回数据，失败通过 lambda / Function 计算备选值 |
+| `getOrThrow()` | 成功返回数据，失败直接抛出 `EhException` |
+| `toOptional()` | 转换为 Java 8 `Optional<T>` |
+| `onSuccess(Consumer / Block)` | 成功回调，支持链式操作 |
+| `onFailure(Consumer / Block)` | 失败回调，支持链式操作 |
+| `map(Function / Block)` | 转换成功数据并保持封装 |
+| `flatMap(Function / Block)` | 平铺转换 |
+| `fold(onSuccess, onFailure)` | 双分支折叠为目标类型 |
+
+---
+
+## 配置 `EhConfig`
+
+```kotlin
+val config = EhConfig(
+    baseUrl = "https://your-api-domain.com/",
+    cookie = "igneous=...; ipb_member_id=...;",
+    userAgent = "wristcomic(1.8.0(18))/smartwatch/xiaomi/hyperos/1.0/1/zh/CN",
+    timeoutSeconds = 30L,
+    enableLogging = false,
+    disableSslVerification = false,
+    dnsIps = listOf("1.1.1.1", "8.8.8.8"),
+    proxyHost = "127.0.0.1",
+    proxyPort = 7890,
+    defaultImageQuality = 50,
+    defaultImageWidth = 400,
+    defaultImageFormat = EhImageFormat.JPEG,
+)
+val eh = EhClient(config)
+```
+
+支持运行时动态更新：
+```kotlin
+eh.updateConfig(newConfig)
+eh.updateCookie("igneous=new_cookie;")
+```
+
+---
+
+## 查询构建 `EhQuery`
+
+专门为画廊复杂检索设计的构建器，能够自动根据多条件组装标准的 E-Hentai 检索语句：
+
+```java
+EhQuery query = EhQuery.builder()
+    .keyword("genshin")
+    .language("chinese")
+    .category("manga")
+    .addTag("female", "big breasts")
+    .uploader("artist_name")
+    .page(1)
+    .build();
+
+// 自动生成: genshin language:chinese category:manga uploader:artist_name female:"big breasts"
+System.out.println(query.toSearchQuery());
+```
+
+---
+
+## REST 与官方接口索引
+
+完整接口列表与参数见 [docs/API.md](docs/API.md)。
+
+```kotlin
+// 1. 获取源配置与健康状态
+eh.getConfig()
+eh.health()
+
+// 2. 检索画廊
+eh.searchComics(query, page)
+eh.searchComics(EhQuery)
+
+// 3. 画廊详情与章节
+eh.getComicDetail(comicId)
+eh.getComicImages(comicId, chapter)
+eh.getAllChapterImages(comicId, totalChapters)
+
+// 4. 图片代理
+eh.fetchProxyImage(rawUrl, width, quality, format)
+eh.downloadProxyImage(rawUrl, targetFile, width, quality, format)
+
+// 5. E-Hentai 官方 JSON RPC 接口直连
+eh.getGalleryMetadata(gid, token)
+eh.getGalleryMetadataList(gidList)
+```
+
+---
+
+## 图片代理与下载器
+
+### 图片代理地址拼装 `EhImages`
+
+```kotlin
+val proxyUrl = EhImages.buildProxyUrl(
+    baseUrl = "https://your-api-domain.com/",
+    rawImageUrl = "https://ehgt.org/cover.jpg",
+    width = 300,
+    quality = 50,
+    format = EhImageFormat.PNG
+)
+```
+
+### 下载器 `EhDownloader`
+- **安全过滤**：`EhDownloader.sanitizeFilename("comic/title:test?*")` 自动将 Windows/Linux 非法字符替换为安全字符。
+- **原子保存**：`EhDownloader.writeAtomically(file, bytes)` 写入同目录下的 `.tmp` 临时文件，写完后原子替换目标文件，断电/断网不会残留损坏文件。
+- **章节批量下载**：`EhDownloader.downloadChapter(images, dir, listener)` 多线程并发下载，实时计算百分比通知。
+
+---
+
+## 线程安全
+
+- 内部持有单个共享的 `OkHttpClient`，本身具备优秀的并发性能与线程安全性。
+- 可变属性（如 `config`、`cookie`）均通过 `@Volatile` 保证多线程可见性。
+- 所有 REST 接口均为**同步阻塞**调用，请勿在 Android 主线程直接执行；或使用 `client.async()` 异步调用。
+
+```kotlin
+// 协程环境下使用示例
+suspend fun loadComics() = withContext(Dispatchers.IO) {
+    Eh.searchComics("language:chinese").getOrThrow()
+}
+```
+
+---
+
+## 目录结构
+
+```
+Ehentai-api-Java/
+├── build.gradle                 # Kotlin JVM 库配置，OkHttp + Gson + JUnit 5
+├── settings.gradle              # Gradle 项目根设置
+├── gradle.properties
+├── docs/
+│   ├── API.md                   # 完整 REST 接口与方法签名说明
+│   └── CONFIG.md                # 完整网络与高级配置参考
+├── src/main/kotlin/com/ehapi/
+│   ├── Eh.kt                    # 全局单例管理器 (对齐 Pica.kt)
+│   ├── EhClient.kt              # 核心同步 REST 客户端 (对齐 PicaClient.kt)
+│   ├── EhAsyncClient.kt         # 异步客户端 (CompletableFuture)
+│   ├── EhConfig.kt              # 不可变配置与 Fluent Builder
+│   ├── EhConstants.kt           # 核心常量定义
+│   ├── EhCookieStore.kt         # Cookie 持久化接口与实现
+│   ├── EhDownloader.kt          # 图片与章节下载器 (原子写入/并发下载)
+│   ├── EhImages.kt              # 图片代理与格式辅助工具
+│   ├── EhNetworking.kt          # TLS / DNS / 代理底层策略
+│   ├── EhQuery.kt               # 检索条件查询构建器 (对齐 ComicQuery.kt)
+│   ├── EhResult.kt              # 统一结果封装与异常 (对齐 PicaResult.kt)
+│   └── TypeAliases.kt           # 类型别名定义
+├── src/main/java/com/ehapi/objects/
+│   ├── EhComicDetail.java       # 画廊详情模型
+│   ├── EhComicItem.java         # 检索条目模型
+│   ├── EhSearchResponse.java    # 列表响应模型
+│   ├── EhChapterImages.java     # 章节图片响应模型
+│   ├── EhImageItem.java         # 单张图片模型
+│   ├── EhSourceConfig.java      # 源规范配置模型
+│   ├── EhHealthResponse.java    # 健康检查响应模型
+│   ├── EhGalleryMetadata.java   # 官方 gdata 元数据模型
+│   ├── EhImageFormat.java       # 图片格式枚举 (JPEG, PNG, LVGL)
+│   └── GDataRequest.java        # 官方 gdata 请求模型
+└── src/test/
+    ├── java/com/ehapi/JavaInteropTest.java    # 纯 Java 互操作与流畅链式测试
+    └── kotlin/com/ehapi/EhClientTest.kt       # MockWebServer 单元测试
+```
+
+---
+
+## 后端代理服务参考
+
+本项目保留了 Python 高性能代理服务服务端源码（`index.py`、`ecosystem.config.js`、`install.sh`），可按需自行部署至 Linux 服务器为低功耗快应用或手表端提供代理转码。
+
 ```bash
-chmod +x install.sh
-sudo ./install.sh
+# 本地调试运行后端
+pip install -r requirements.txt
+python index.py
 ```
 
-### 方式二：手动部署
-
-#### a. 环境要求
-- Linux 服务器
-- Python 3.10+
-- PM2 (Node.js 进程管理器)
-- Nginx 或 OpenResty
-
-#### b. 安装依赖
-```bash
-git clone https://github.com/OrPudding/vela-py-eh-api-server.git /opt/eh-api-service
-cd /opt/eh-api-service
-pip3 install --break-system-packages -r requirements.txt
-npm install pm2 -g
-```
-
-#### c. 使用 PM2 启动服务
-```bash
-pm2 start ecosystem.config.js
-pm2 save
-```
-
-#### d. 配置 Nginx 反向代理
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name your-api-domain.com;
-
-    ssl_certificate /path/to/your/fullchain.pem;
-    ssl_certificate_key /path/to/your/privkey.pem;
-    
-    location / {
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_pass http://127.0.0.1:8000;
-    }
-}
-```
+服务端提供 `/config`、`/search`、`/comic/<id>`、`/photo/<id>/<chapter>`、`/image/proxy`、`/health` 接口，Java / Kotlin 客户端无缝对接。
 
 ---
 
-## 📖 API 接口文档
+## FAQ
 
-### 调用前须知
+**Q：调用该库需要 Android 环境吗？**  
+A：不需要，纯标准 JVM 库（Java 17+），完全兼容 Android、Spring Boot、Ktor、JavaFX、Compose Desktop 及各类命令行工具。
 
-为了访问 ExHentai 或个性化内容，您需要提供 E-Hentai/ExHentai 的 Cookie。本项目支持通过 **HTTP 请求头** `Cookie` 来手动传入 Cookie。
+**Q：访问 ExHentai 或受限画廊需要什么？**  
+A：只需在 `EhConfig` 中配置合法 Cookie 字符串（包含 `igneous`、`ipb_member_id`、`ipb_pass_hash`），所有请求将自动带上该 Cookie。
 
-**请求示例**:
-```
-GET https://your-api-domain.com/search?q=language:chinese
-Headers: {
-  "Cookie": "igneous=xxx; ipb_member_id=12345; ..."
-}
-```
-> **注意**: 如果不提供此请求头，API 将以游客身份访问公开的 E-Hentai 内容。
-
-### User-Agent 解析 (1.8版本)
-
-所有 API 请求都会携带以下格式的 User-Agent：
-```
-packageName(versionName(versionCode))/product/brand/osType/osVersionName/osVersionCode/language/region
-```
-
-服务器会根据 User-Agent 自动调整图片参数：
-- **手环/手表设备**: 宽度 300px，质量 40
-- **手机设备**: 宽度 400px，质量 50
-- **其他设备**: 默认宽度 400px，质量 50
-
-图片接口也支持客户端显式传入 `width` / `quality` 参数覆盖默认值。为了兼容旧调用方式，也同时支持 `w` / `q`。
-
-当 User-Agent 中的 `language` 为 `zh` 开头，或 `region` 为 `CN` / `TW` / `HK` / `MO` 时，详情接口会使用 [EhTagTranslation/Database](https://github.com/EhTagTranslation/Database) 汉化分类和标签；非中文环境保持 E-Hentai 原始标签。
-
----
-
-### 1. 获取漫画源配置
-
-**接口地址**: `/config`
-
-**调用例子**: `/config`
-
-**返回示例**:
-```json
-{
-  "E-Hentai": {
-    "name": "E-Hentai",
-    "apiUrl": "https://your-api-domain.com",
-    "searchPath": "/search?q=<text>&page=<page>",
-    "photoPath": "/photo/<id>/<chapter>",
-    "detailPath": "/comic/<id>",
-    "type": "ehentai"
-  }
-}
-```
-
----
-
-### 2. 搜索漫画
-
-**必选参数**:
-`q`: 搜索关键词，例如 `language:chinese`。
-
-**可选参数**:
-`page`: 页数，从 1 开始。默认为 1。
-
-**接口地址**: `/search`
-
-**调用例子**:
-- 搜索第一页: `/search?q=language:chinese`
-- 搜索第二页: `/search?q=language:chinese&page=2`
-
-**返回示例**:
-```json
-{
-  "page": 1,
-  "has_more": true,
-  "results": [
-    {
-      "comic_id": "3645215_4db836130d",
-      "title": "[Chinese] 画廊标题",
-      "cover_url": "https://your-api-domain.com/image/proxy?url=...&w=150&q=40",
-      "pages": 25
-    }
-  ]
-}
-```
-
-> **说明**: `comic_id` 格式为 `gid_token`，用于后续获取详情和图片。
-
----
-
-### 3. 获取漫画详情
-
-**必选参数**:
-`id`: 漫画 ID，格式为 `gid_token`。
-
-**接口地址**: `/comic/<id>`
-
-**调用例子**: `/comic/3645215_4db836130d`
-
-**返回示例**:
-```json
-{
-  "item_id": "3645215_4db836130d",
-  "name": "[Chinese] 画廊标题",
-  "page_count": 233,
-  "rate": 4.5,
-  "cover": "https://your-api-domain.com/image/proxy?url=...&w=150&q=40",
-  "tags": ["漫画", "汉语", "已翻译", "巨乳", "单女主", "单男主"],
-  "total_chapters": 12
-}
-```
-
----
-
-### 4. 获取漫画图片列表
-
-**必选参数**:
-`id`: 漫画 ID，格式为 `gid_token`。
-`chapter`: 虚拟章节编号，从 1 开始。服务端按每 20 张图片拆分一个虚拟章节。
-
-**接口地址**: `/photo/<id>/<chapter>`
-
-**调用例子**:
-- 获取第 1 个虚拟章节（第 1-20 张）: `/photo/3645215_4db836130d/1`
-- 获取第 2 个虚拟章节（第 21-40 张）: `/photo/3645215_4db836130d/2`
-
-**返回示例**:
-```json
-{
-  "title": "[Chinese] 画廊标题 - Part 1",
-  "images": [
-    {
-      "url": "https://your-api-domain.com/image/proxy?url=..."
-    },
-    {
-      "url": "https://your-api-domain.com/image/proxy?url=..."
-    }
-  ]
-}
-```
-
-> **说明**: 图片列表只返回基础代理 URL，腕上漫画快应用会在实际请求图片时追加 `width`、`quality`、`ifPNG`、`ifLVGL` 等参数。
-
----
-
-### 5. 图片代理服务
-
-**说明**: 此接口用于获取经过服务器处理（切割、缩放、压缩、转码）后的图片或 LVGL 预解码二进制。
-
-**必选参数**:
-`url`: 原始图片 URL。
-
-**可选参数**:
-- `width` 或 `w`: 图片最大宽度。默认根据设备自动调整。
-- `quality` 或 `q`: 图片质量，范围 1-100。默认根据设备自动调整。
-- `ifPNG`: 为 `1`、`true`、`True`、`yes`、`on` 时返回 PNG。
-- `ifLVGL`: 为 `1`、`true`、`True`、`yes`、`on` 时返回 LVGL 预解码二进制。
-- `crop_x`, `crop_y`, `crop_w`, `crop_h`: 用于切割雪碧图的参数。
-
-**输出优先级**:
-
-```text
-ifLVGL=1 > ifPNG=1 > 默认 JPEG
-```
-
-也就是说，同时传入 `ifPNG=1&ifLVGL=1` 时，接口会返回 LVGL 二进制，而不是 PNG。
-
-**接口地址**: `/image/proxy`
-
-**调用例子**:
-- 代理大图: `/image/proxy?url=https://.../image.webp`
-- 指定宽度和质量: `/image/proxy?url=https://.../image.webp&width=600&quality=60`
-- 返回 PNG: `/image/proxy?url=https://.../image.webp&width=600&quality=60&ifPNG=1`
-- 返回 LVGL 二进制: `/image/proxy?url=https://.../image.webp&width=600&quality=60&ifLVGL=1`
-
-**返回内容**:
-- **默认**: 返回 `Content-Type: image/jpeg` 的图片二进制数据。
-- **开启 `ifPNG`**: 返回 `Content-Type: image/png` 的图片二进制数据。
-- **开启 `ifLVGL`**: 返回 `Content-Type: application/octet-stream` 的 LVGL 预解码二进制数据。
-- **失败**: 返回 `Content-Type: application/json` 的错误信息。
-
----
-
-### 6. 健康检查
-
-**接口地址**: `/health`
-
-**调用例子**: `/health`
-
-**返回示例**:
-```json
-{
-  "status": "ok",
-  "client_cookie_provided": true
-}
-```
-
----
-
-### 7. 测试页面
-
-**接口地址**: `/test`
-
-**说明**: 提供一个 Web 界面用于测试 API 功能。
-
----
-
-## 🔄 缓存策略
-
-| 缓存类型 | 缓存时间 | 最大条目数 |
-|---------|---------|-----------|
-| 列表缓存 | 5 分钟 | 100 |
-| 画廊详情缓存 | 1 小时 | 500 |
-| 图片代理缓存 | 24 小时 | 1000 |
-| 分页游标缓存 | 10 分钟 | 200 |
-
----
-
-## 📱 自定义漫画源集成
-
-本 API 完全符合自定义漫画源规范，可直接集成到支持的漫画阅读应用中。
-
-**集成步骤**:
-1. 在应用中添加自定义漫画源
-2. 输入 API 地址（如 `https://your-api-domain.com`）
-3. 应用会自动获取 `/config` 配置
-4. 开始浏览和阅读
-
-**ID 格式说明**:
-- 漫画 ID 格式为 `gid_token`（如 `3645215_4db836130d`）
-- 这是为了兼容 E-Hentai 的 gid 和 token 机制
-
----
-
-## ⚖️ 许可
-
-本软件根据 **GNU Affero General Public License v3.0** 许可。详情请参阅 `LICENSE` 文件。
+**Q：遇到 404 或网络问题如何捕获？**  
+A：接口不会直接向外抛出未捕获的网络崩溃。统一返回 `EhResult.Failure`，可通过 `result.isFailure`、`result.getFailureOrNull()` 优雅处理，或调用 `result.getOrThrow()` 按需抛出 `EhException`。
